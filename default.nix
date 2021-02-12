@@ -104,9 +104,26 @@ let
     }
   );
 
+  mkNgEmacs = namePrefix: jsonFile: (mkGitEmacs namePrefix jsonFile).overrideAttrs (
+    old: {
+      # configureFlags =  '' LIBCLANG_PATH="${self.llvmPackages_6.libclang.lib}/lib";'' ++  old.configureFlags;
+      preConfigure=''
+        export HOME=$(mktemp -d)
+      '';
+      buildInputs = old.buildInputs ++ [ self.rustup self.clang_6 self.libotf self.pkgconfig self.autoconf ];
+      }
+  );
+
+
   emacsGit = mkGitEmacs "emacs-git" ./repos/emacs/emacs-master.json;
 
   emacsGcc = (mkGitEmacs "emacs-gcc" ./repos/emacs/emacs-feature_native-comp.json).override {
+    nativeComp = true;
+  };
+
+  emacsNg = (mkNgEmacs "emacs-ng" ./repos/emacs/emacs-ng-master.json);
+
+  emacsNgGcc = (mkNgEmacs "emacs-ng-gcc" ./repos/emacs/emacs-ng-master.json).override {
     nativeComp = true;
   };
 
@@ -133,6 +150,7 @@ in
 
   inherit emacsPgtk emacsPgtkGcc;
 
+  inherit emacsNg emacsNgGcc;
   emacsGit-nox = (
     (
       emacsGit.override {
