@@ -1,4 +1,4 @@
 { nixpkgs }:
 let
   pkgs = import ./pkgs.nix nixpkgs;
-in pkgs.mkEmacsSet pkgs.emacs
+in pkgs.mkEmacsSet pkgs.emacsGcc

@@ -4,41 +4,64 @@ use-package declarations.
 */
 
 { pkgs }:
-
 let
-  isStrEmpty = s: (builtins.replaceStrings [" "] [""] s) == "";
+  parse = pkgs.callPackage ./parse.nix { };
+  inherit (pkgs) lib;
 
-  splitString = _sep: _s: builtins.filter
-    (x: builtins.typeOf x == "string")
-    (builtins.split _sep _s);
 
-  stripComments = dotEmacs: let
-    lines = splitString "\n" dotEmacs;
-    stripped = builtins.map (l:
-      builtins.elemAt (splitString ";;" l) 0) lines;
-  in builtins.concatStringsSep " " stripped;
 
-  parsePackages = dotEmacs: let
-    strippedComments = stripComments dotEmacs;
-    tokens = builtins.filter (t: !(isStrEmpty t)) (builtins.map
-      (t: if builtins.typeOf t == "list" then builtins.elemAt t 0 else t)
-      (builtins.split "([\(\)])" strippedComments));
-    matches = builtins.map (t:
-      builtins.match "^use-package[[:space:]]+([A-Za-z0-9_-]+).*" t) tokens;
-  in builtins.map (m: builtins.elemAt m 0)
-      (builtins.filter (m: m != null) matches);
+in
+{ config
+# emulate `use-package-always-ensure` behavior
+, alwaysEnsure ? false
+# emulate `#+PROPERTY: header-args:emacs-lisp :tangle yes`
+, alwaysTangle ? false
+, extraEmacsPackages ? epkgs: [ ]
+, package ? pkgs.emacs
+, override ? (epkgs: epkgs)
+}:
+let
+  ensureNotice = ''
+    Emacs-overlay API breakage notice:
 
-in {
-  config,
-  extraEmacsPackages ? epkgs: [],
-  package ? pkgs.emacs,
-  override ? (epkgs: epkgs)
-}: let
-  packages = parsePackages config;
+    Previously emacsWithPackagesFromUsePackage always added every use-package definition to the closure.
+    Now we will only add packages with `:ensure`, `:ensure t` or `:ensure <package name>`.
+
+    You can get back the old behaviour by passing `alwaysEnsure = true`.
+    For a more in-depth usage example see https://github.com/nix-community/emacs-overlay#extra-library-functionality
+  '';
+  showNotice = value: if alwaysEnsure then value else builtins.trace ensureNotice value;
+
+  isOrgModeFile =
+    let
+      ext = lib.last (builtins.split "\\." (builtins.toString config));
+      type = builtins.typeOf config;
+    in
+      type == "path" && ext == "org";
+
+  configText =
+    let
+      type = builtins.typeOf config;
+    in
+      if type == "string" then config
+      else if type == "path" then builtins.readFile config
+      else throw "Unsupported type for config: \"${type}\"";
+
+  packages = showNotice (parse.parsePackagesFromUsePackage {
+    inherit configText alwaysEnsure isOrgModeFile alwaysTangle;
+  });
   emacsPackages = pkgs.emacsPackagesGen package;
   emacsWithPackages = emacsPackages.emacsWithPackages;
-in emacsWithPackages (epkgs: let
-  overriden = override epkgs;
-  usePkgs = builtins.map (name: overriden.${name}) packages;
-  extraPkgs = extraEmacsPackages overriden;
-in [ overriden.use-package ] ++ usePkgs ++ extraPkgs)
+  mkPackageError = name:
+    let
+      errorFun = if alwaysEnsure then builtins.trace else throw;
+    in
+    errorFun "Emacs package ${name}, declared wanted with use-package, not found." null;
+in
+emacsWithPackages (epkgs:
+  let
+    overridden = override epkgs;
+    usePkgs = map (name: overridden.${name} or (mkPackageError name)) packages;
+    extraPkgs = extraEmacsPackages overridden;
+  in
+  usePkgs ++ extraPkgs)
